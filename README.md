@@ -1,0 +1,1 @@
+# docker-bridge-plugin
