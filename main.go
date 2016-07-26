@@ -18,7 +18,6 @@ func main() {
 	var flagDebug = cli.BoolFlag{
 		Name:  "debug, d",
 		Usage: "enable debugging",
-		Usage: "enable debugging",
 	}
 	app := cli.NewApp()
 	app.Name = "don"

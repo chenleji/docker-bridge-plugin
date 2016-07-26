@@ -142,8 +142,12 @@ func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	}
 
 	bridgeName := d.networks[r.NetworkID].BridgeName
-	bridge, _ := netlink.LinkByName(bridgeName)
-	if err := netlink.LinkSetMaster(localVethPair, bridge); err != nil {
+	link, _ := netlink.LinkByName(bridgeName)
+
+	bridge := netlink.Bridge{}
+	bridge.LinkAttrs = *(link.Attrs())
+
+	if err := netlink.LinkSetMaster(localVethPair, &bridge); err != nil {
 		log.Errorf("error attaching veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
 		return nil, err
 	}
