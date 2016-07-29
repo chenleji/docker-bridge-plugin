@@ -186,14 +186,14 @@ func (d *Driver) Leave(r *dknet.LeaveRequest) error {
 	bridgeName := d.networks[r.NetworkID].BridgeName
 
 	if err:= netlink.LinkSetNoMaster(localVethPair); err != nil {
-		log.Errorf("OVS port [ %s ] delete transaction failed on bridge [ %s ] due to: %s", portID, bridgeName, err)
+		log.Errorf("Port [ %s ] delete transaction failed on bridge [ %s ] due to: %s", portID, bridgeName, err)
 		return err
 	}
 
 	if err := netlink.LinkDel(localVethPair); err != nil {
 		log.Errorf("unable to delete veth on leave: %s", err)
 	}
-	log.Infof("Deleted OVS port [ %s ] from bridge [ %s ]", portID, bridgeName)
+	log.Infof("Deleted port [ %s ] from bridge [ %s ]", portID, bridgeName)
 	log.Debugf("Leave %s:%s", r.NetworkID, r.EndpointID)
 	return nil
 }
