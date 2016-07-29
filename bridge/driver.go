@@ -154,6 +154,19 @@ func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 
 	log.Infof("Attached veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
 
+
+	ipNet, err := netlink.ParseIPNet("192.168.99.20/32")
+	if err != nil {
+		return nil, err
+	}
+	routeList, err := netlink.RouteGet(ipNet.IP)
+	if err != nil {
+		return nil, err
+	}
+	var route = routeList[0]
+	log.Errorf("debug:%d", route.LinkIndex)
+
+
 	// SrcName gets renamed to DstPrefix + ID on the container iface
 	res := &dknet.JoinResponse{
 		InterfaceName: dknet.InterfaceName{

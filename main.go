@@ -41,5 +41,5 @@ func Run(ctx *cli.Context) {
 		panic(err)
 	}
 	h := dknet.NewHandler(d)
-	h.ServeUnix("root", "bridge")
+	h.ServeUnix("root", "wise2c-bridge")
 }
