@@ -45,9 +45,11 @@ type Driver struct {
 }
 
 type EndpointState struct {
+	Container string
 	Fip string
 	Lip string
 	FipIfName string
+	OriginGateway string
 }
 
 // NetworkState is filled in at network creation time
@@ -178,6 +180,7 @@ func (d *Driver) CreateEndpoint(r *dknet.CreateEndpointRequest) error {
 		Fip: fipStr,
 		FipIfName: intf.Name,
 		Lip: lipStr,
+		Container: "1f9974015e01",
 	}
 
 	if err = addFipDnat(fipStr, lipStr, bridgeName); err != nil {
@@ -205,7 +208,11 @@ func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	// create and attach local name to the bridge
 	localVethPair := vethPair(truncateID(r.EndpointID))
 
-	updateDefaultGW4Container("1f9974015e01", d.endpoints[r.EndpointID].Lip)
+	gw, err := updateDefaultGW4Container(d.endpoints[r.EndpointID].Container, d.endpoints[r.EndpointID].Lip)
+	if err != nil {
+		return nil, err
+	}
+	d.endpoints[r.EndpointID].OriginGateway = gw
 	// SrcName gets renamed to DstPrefix + ID on the container iface
 	res := &dknet.JoinResponse{
 		InterfaceName: dknet.InterfaceName{
@@ -223,6 +230,8 @@ func (d *Driver) Leave(r *dknet.LeaveRequest) error {
 	localVethPair := vethPair(truncateID(r.EndpointID))
 	portID := fmt.Sprintf(brPortPrefix + truncateID(r.EndpointID))
 	bridgeName := d.networks[r.NetworkID].BridgeName
+
+	updateDefaultGW4Container(d.endpoints[r.EndpointID].Container, d.endpoints[r.EndpointID].OriginGateway)
 
 	// Delete DNAT for floating ip
 	fip := d.endpoints[r.EndpointID].Fip

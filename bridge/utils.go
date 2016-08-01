@@ -8,6 +8,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
+	"strings"
 )
 
 // Generate a mac addr
@@ -116,26 +117,45 @@ func validateIface(ifaceStr string) bool {
 	return true
 }
 
-func updateDefaultGW4Container(container string, ip string) {
-	exec.Command("mkdir", "-p", "/var/run/netns").Run()
+func updateDefaultGW4Container(container string, ip string) (string, error) {
+	if err := exec.Command("mkdir", "-p", "/var/run/netns").Run() err != nil {
+		log.Fatal(err)
+	}
+
 	pid, err := exec.Command("docker", "inspect", "-f", "'{{.State.Pid}}'", container).Output()
 	if err != nil {
 		log.Fatal(err)
+		return nil, err
 	}
 
-	srcFile := "/proc/"+pid+"/ns/net"
+	srcFile := "/host/proc/"+strings.TrimSuffix(strings.TrimPrefix(string(pid), "'"), "'")+"/ns/net"
 	dstFile := "/var/run/netns/"+container
-	if _, err := exec.Command("ln", "-s", srcFile, dstFile).Output(); err != nil {
+	if err := exec.Command("ln", "-s", srcFile, dstFile).Run(); err != nil {
 		log.Fatal(err)
 	}
 
-	if _, err := exec.Command("ip", "netns", "exec", container,
-					"route", "del", "default").Output(); err != nil {
+	gateway, err := exec.Command("ip", "route", "|", "grep", "default", "|",
+		"cut", "-d", "' '", "-f", "3").Output()
+
+	if err != nil {
+		log.Fatal(err)
+		return nil, err
+	}
+	log.Infof("=========gwteway:%s", string(gateway))
+
+	if err := exec.Command("ip", "netns", "exec", container,
+					"ip", "route", "del", "default").Run(); err != nil {
 		log.Fatal(err)
 	}
 
-	if _, err := exec.Command("ip", "netns", "exec", container,"ip",
-					"route", "add", "default", "via", ip).Output(); err != nil {
+	if err := exec.Command("ip", "netns", "exec", container,"ip",
+					"route", "add", "default", "via", ip).Run(); err != nil {
 		log.Fatal(err)
 	}
+
+	if err := exec.Command("rm", dstFile).Run(); err != nil {
+		log.Fatal(err)
+	}
+
+	return string(gateway), nil
 }
