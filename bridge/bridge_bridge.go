@@ -49,7 +49,7 @@ func (d *Driver) initBridge(id string) error {
 			}
 
 			// Add NAT rules for iptables
-			if err = natOut(gatewayIP); err != nil {
+			if err = addNatOut(gatewayIP, bridgeName); err != nil {
 				log.Fatalf("Could not set NAT rules for bridge %s", bridgeName)
 				return err
 			}
@@ -83,9 +83,10 @@ func deleteBridge(bridgeName string) error {
 }
 
 // todo: reconcile with what libnetwork does and port mappings
-func natOut(cidr string) error {
+func addNatOut(cidr string, intfName string) error {
 	masquerade := []string{
 		"POSTROUTING", "-t", "nat",
+		"-i", intfName,
 		"-s", cidr,
 		"-j", "MASQUERADE",
 	}
@@ -100,6 +101,80 @@ func natOut(cidr string) error {
 				Chain:  "POSTROUTING",
 				Output: output,
 			}
+		}
+	}
+	return nil
+}
+
+func delNatOut(cidr string, intfName string) error {
+	masquerade := []string{
+		"POSTROUTING", "-t", "nat",
+		"-i", intfName,
+		"-s", cidr,
+		"-j", "MASQUERADE",
+	}
+	if _, err := iptables.Raw(
+		append([]string{"-C"}, masquerade...)...,
+	); err != nil {
+		log.Errorln("Can't find NAT rule in POSTROUTING chain!")
+	}
+
+	incl := append([]string{"-D"}, masquerade...)
+	if output, err := iptables.Raw(incl...); err != nil {
+		return err
+	} else if len(output) > 0 {
+		return &iptables.ChainError{
+			Chain:  "POSTROUTING",
+			Output: output,
+		}
+	}
+
+	return nil
+}
+
+func addFipDnat(fipStr string, lipStr string, intfName string) error {
+	masquerade := []string{
+		"DOCKER", "-t", "nat",
+		"-d", fipStr,
+		"!", "-i", intfName,
+		"-j", "DNAT", "--to-destination", lipStr,
+	}
+	if _, err := iptables.Raw(
+		append([]string{"-C"}, masquerade...)...,
+	); err != nil {
+		incl := append([]string{"-I"}, masquerade...)
+		if output, err := iptables.Raw(incl...); err != nil {
+			return err
+		} else if len(output) > 0 {
+			return &iptables.ChainError{
+				Chain:  "DOCKER",
+				Output: output,
+			}
+		}
+	}
+	return nil
+}
+
+func delFipDnat(fipStr string, lipStr string, intfName string) error {
+	masquerade := []string{
+		"DOCKER", "-t", "nat",
+		"-d", fipStr,
+		"!", "-i", intfName,
+		"-j", "DNAT", "--to-destination", lipStr,
+	}
+	if _, err := iptables.Raw(
+		append([]string{"-C"}, masquerade...)...,
+	); err != nil {
+		log.Errorln("Can't find NAT rule in POSTROUTING chain!")
+	}
+
+	incl := append([]string{"-D"}, masquerade...)
+	if output, err := iptables.Raw(incl...); err != nil {
+		return err
+	} else if len(output) > 0 {
+		return &iptables.ChainError{
+			Chain:  "DOCKER",
+			Output: output,
 		}
 	}
 	return nil

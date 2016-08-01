@@ -47,11 +47,11 @@ func setInterfaceIP(name string, rawIP string) error {
 		if err == nil {
 			break
 		}
-		log.Debugf("error retrieving new OVS bridge netlink link [ %s ]... retrying", name)
+		log.Debugf("error retrieving new bridge netlink link [ %s ]... retrying", name)
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Fatalf("Abandoning retrieving the new OVS bridge link from netlink, Run [ ip link ] to troubleshoot the error: %s", err)
+		log.Fatalf("Abandoning retrieving the new bridge link from netlink, Run [ ip link ] to troubleshoot the error: %s", err)
 		return err
 	}
 	ipNet, err := netlink.ParseIPNet(rawIP)
@@ -60,6 +60,34 @@ func setInterfaceIP(name string, rawIP string) error {
 	}
 	addr := &netlink.Addr{ipNet, "", 0, 0}
 	return netlink.AddrAdd(iface, addr)
+}
+
+// Delete the IP addr of a netlink interface
+func delInterfaceIP(name string, rawIP string) error {
+	retries := 2
+	var iface netlink.Link
+	var err error
+	for i := 0; i < retries; i++ {
+		iface, err = netlink.LinkByName(name)
+		if err == nil {
+			break
+		}
+		log.Debugf("error retrieving netlink link [ %s ]... retrying", name)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Fatalf("Abandoning retrieving the link from netlink, Run [ ip link ] to troubleshoot the error: %s", err)
+		return err
+	}
+	ipNet, err := netlink.ParseIPNet(rawIP)
+	if err != nil {
+		return err
+	}
+	addr := &netlink.Addr{ipNet, "", 0, 0}
+	if err := netlink.AddrDel(iface, addr); err != nil {
+		log.Debugf("error delete addr [%s] for interface [%s]", rawIP, name)
+	}
+	return nil
 }
 
 // Increment an IP in a subnet

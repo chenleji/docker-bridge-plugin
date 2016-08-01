@@ -3,6 +3,7 @@ package bridge
 import (
 	"fmt"
 	"strings"
+	"net"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/gopher-net/dknet"
@@ -39,6 +40,14 @@ type Driver struct {
 	dknet.Driver
 	dockerer
 	networks map[string]*NetworkState
+	endpoints map[string]*EndpointState
+
+}
+
+type EndpointState struct {
+	Fip string
+	Lip string
+	FipIfName string
 }
 
 // NetworkState is filled in at network creation time
@@ -101,6 +110,14 @@ func (d *Driver) CreateNetwork(r *dknet.CreateNetworkRequest) error {
 func (d *Driver) DeleteNetwork(r *dknet.DeleteNetworkRequest) error {
 	log.Debugf("Delete network request: %+v", r)
 	bridgeName := d.networks[r.NetworkID].BridgeName
+
+	// Delete NAT rules for bridge
+	gatewayIP := d.networks[r.NetworkID].Gateway + "/" + d.networks[r.NetworkID].GatewayMask
+	if err := delNatOut(gatewayIP, bridgeName); err != nil {
+		log.Fatalf("Could not del NAT rules for bridge %s", bridgeName)
+		return err
+	}
+
 	log.Debugf("Deleting Bridge %s", bridgeName)
 	if err := deleteBridge(bridgeName); err != nil {
 		log.Errorf("Deleting bridge %s failed: %s", bridgeName, err)
@@ -112,11 +129,68 @@ func (d *Driver) DeleteNetwork(r *dknet.DeleteNetworkRequest) error {
 
 func (d *Driver) CreateEndpoint(r *dknet.CreateEndpointRequest) error {
 	log.Debugf("Create endpoint request: %+v", r)
+	localVethPair := vethPair(truncateID(r.EndpointID))
+	if err := netlink.LinkAdd(localVethPair); err != nil {
+		log.Errorf("failed to create the veth pair named: [ %v ] error: [ %s ] ", localVethPair, err)
+		return err
+	}
+	// Bring the veth pair up
+	err := netlink.LinkSetUp(localVethPair)
+	if err != nil {
+		log.Warnf("Error enabling  Veth local iface: [ %v ]", localVethPair)
+		return err
+	}
+
+	bridgeName := d.networks[r.NetworkID].BridgeName
+	link, _ := netlink.LinkByName(bridgeName)
+
+	bridge := netlink.Bridge{}
+	bridge.LinkAttrs = *(link.Attrs())
+
+	if err := netlink.LinkSetMaster(localVethPair, &bridge); err != nil {
+		log.Errorf("error attaching veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
+		return err
+	}
+
+	log.Infof("Attached veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
+
+	// Add floating IP to GW interface
+	fip := "10.0.2.200/32"
+	fipNet, err := netlink.ParseIPNet(fip)
+	if err != nil {
+		return err
+	}
+	routeList, err := netlink.RouteGet(fipNet.IP)
+	if err != nil {
+		return err
+	}
+	route := routeList[0]
+	intf, err := net.InterfaceByIndex(route.LinkIndex)
+	if err != nil {
+		return err
+	}
+	setInterfaceIP(intf.Name, fip)
+
+	// Add DNAT rules for floating IP
+	fipStr := strings.Split(fip, "/")[0]
+	lipStr := strings.Split(r.Interface.Address, "/")[0]
+	d.endpoints[r.EndpointID] = &EndpointState{
+		Fip: fipStr,
+		FipIfName: intf.Name,
+		Lip: lipStr,
+	}
+
+	if err = addFipDnat(fipStr, lipStr, bridgeName); err != nil {
+		log.Fatalf("Could not set NAT rules for floating ip %s", fip)
+		log.Fatalf("%s", err)
+		return err
+	}
 	return nil
 }
 
 func (d *Driver) DeleteEndpoint(r *dknet.DeleteEndpointRequest) error {
 	log.Debugf("Delete endpoint request: %+v", r)
+	delete(d.endpoints, r.EndpointID)
 	return nil
 }
 
@@ -130,42 +204,6 @@ func (d *Driver) EndpointInfo(r *dknet.InfoRequest) (*dknet.InfoResponse, error)
 func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	// create and attach local name to the bridge
 	localVethPair := vethPair(truncateID(r.EndpointID))
-	if err := netlink.LinkAdd(localVethPair); err != nil {
-		log.Errorf("failed to create the veth pair named: [ %v ] error: [ %s ] ", localVethPair, err)
-		return nil, err
-	}
-	// Bring the veth pair up
-	err := netlink.LinkSetUp(localVethPair)
-	if err != nil {
-		log.Warnf("Error enabling  Veth local iface: [ %v ]", localVethPair)
-		return nil, err
-	}
-
-	bridgeName := d.networks[r.NetworkID].BridgeName
-	link, _ := netlink.LinkByName(bridgeName)
-
-	bridge := netlink.Bridge{}
-	bridge.LinkAttrs = *(link.Attrs())
-
-	if err := netlink.LinkSetMaster(localVethPair, &bridge); err != nil {
-		log.Errorf("error attaching veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
-		return nil, err
-	}
-
-	log.Infof("Attached veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
-
-
-	ipNet, err := netlink.ParseIPNet("192.168.99.20/32")
-	if err != nil {
-		return nil, err
-	}
-	routeList, err := netlink.RouteGet(ipNet.IP)
-	if err != nil {
-		return nil, err
-	}
-	var route = routeList[0]
-	log.Errorf("debug:%d", route.LinkIndex)
-
 
 	// SrcName gets renamed to DstPrefix + ID on the container iface
 	res := &dknet.JoinResponse{
@@ -185,6 +223,19 @@ func (d *Driver) Leave(r *dknet.LeaveRequest) error {
 	portID := fmt.Sprintf(brPortPrefix + truncateID(r.EndpointID))
 	bridgeName := d.networks[r.NetworkID].BridgeName
 
+	// Delete DNAT for floating ip
+	fip := d.endpoints[r.EndpointID].Fip
+	lip := d.endpoints[r.EndpointID].Lip
+	if err:= delFipDnat(fip, lip, bridgeName); err != nil {
+		log.Errorf("Delete DNAT rule failed!")
+		return err
+	}
+
+	// Delete floating ip on interface
+	fipIfName := d.endpoints[r.EndpointID].FipIfName
+	delInterfaceIP(fipIfName, fip+"/32")
+
+	//
 	if err:= netlink.LinkSetNoMaster(localVethPair); err != nil {
 		log.Errorf("Port [ %s ] delete transaction failed on bridge [ %s ] due to: %s", portID, bridgeName, err)
 		return err
@@ -209,6 +260,7 @@ func NewDriver() (*Driver, error) {
 			client: docker,
 		},
 		networks: make(map[string]*NetworkState),
+		endpoints: make(map[string]*EndpointState),
 	}
 
 	return d, nil
@@ -218,7 +270,7 @@ func NewDriver() (*Driver, error) {
 func vethPair(suffix string) *netlink.Veth {
 	return &netlink.Veth{
 		LinkAttrs: netlink.LinkAttrs{Name: brPortPrefix + suffix},
-		PeerName:  "ethc" + suffix,
+		PeerName:  "br-veth1-" + suffix,
 	}
 }
 
