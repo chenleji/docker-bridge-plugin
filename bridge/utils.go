@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"time"
+	"os/exec"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
@@ -113,4 +114,28 @@ func validateIface(ifaceStr string) bool {
 		return false
 	}
 	return true
+}
+
+func updateDefaultGW4Container(container string, ip string) {
+	exec.Command("mkdir", "-p", "/var/run/netns").Run()
+	pid, err := exec.Command("docker", "inspect", "-f", "'{{.State.Pid}}'", container).Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	srcFile := "/proc/"+pid+"/ns/net"
+	dstFile := "/var/run/netns/"+container
+	if _, err := exec.Command("ln", "-s", srcFile, dstFile).Output(); err != nil {
+		log.Fatal(err)
+	}
+
+	if _, err := exec.Command("ip", "netns", "exec", container,
+					"route", "del", "default").Output(); err != nil {
+		log.Fatal(err)
+	}
+
+	if _, err := exec.Command("ip", "netns", "exec", container,"ip",
+					"route", "add", "default", "via", ip).Output(); err != nil {
+		log.Fatal(err)
+	}
 }

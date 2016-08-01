@@ -86,7 +86,7 @@ func deleteBridge(bridgeName string) error {
 func addNatOut(cidr string, intfName string) error {
 	masquerade := []string{
 		"POSTROUTING", "-t", "nat",
-		"-i", intfName,
+		"!", "-o", intfName,
 		"-s", cidr,
 		"-j", "MASQUERADE",
 	}
@@ -109,7 +109,7 @@ func addNatOut(cidr string, intfName string) error {
 func delNatOut(cidr string, intfName string) error {
 	masquerade := []string{
 		"POSTROUTING", "-t", "nat",
-		"-i", intfName,
+		"!", "-o", intfName,
 		"-s", cidr,
 		"-j", "MASQUERADE",
 	}

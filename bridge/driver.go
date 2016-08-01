@@ -205,6 +205,7 @@ func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	// create and attach local name to the bridge
 	localVethPair := vethPair(truncateID(r.EndpointID))
 
+	updateDefaultGW4Container("1f9974015e01", d.endpoints[r.EndpointID].Lip)
 	// SrcName gets renamed to DstPrefix + ID on the container iface
 	res := &dknet.JoinResponse{
 		InterfaceName: dknet.InterfaceName{
