@@ -118,43 +118,41 @@ func validateIface(ifaceStr string) bool {
 }
 
 func updateDefaultGW4Container(container string, ip string) (string, error) {
-	if err := exec.Command("mkdir", "-p", "/var/run/netns").Run() err != nil {
-		log.Fatal(err)
-	}
+	log.Infoln("updateDefaultGW4Container")
 
+	exec.Command("mkdir", "-p", "/var/run/netns").Run()
 	pid, err := exec.Command("docker", "inspect", "-f", "'{{.State.Pid}}'", container).Output()
 	if err != nil {
-		log.Fatal(err)
-		return nil, err
+		log.Infoln("docker inspect error!", err)
+		return "", err
 	}
 
 	srcFile := "/host/proc/"+strings.TrimSuffix(strings.TrimPrefix(string(pid), "'"), "'")+"/ns/net"
 	dstFile := "/var/run/netns/"+container
 	if err := exec.Command("ln", "-s", srcFile, dstFile).Run(); err != nil {
-		log.Fatal(err)
+		log.Infoln("ln -s error!", err)
 	}
 
 	gateway, err := exec.Command("ip", "route", "|", "grep", "default", "|",
 		"cut", "-d", "' '", "-f", "3").Output()
-
 	if err != nil {
-		log.Fatal(err)
-		return nil, err
+		log.Infoln("ip route | grep default | cut -d ' ' -f 3 error!", err)
+		return "", err
 	}
 	log.Infof("=========gwteway:%s", string(gateway))
 
 	if err := exec.Command("ip", "netns", "exec", container,
 					"ip", "route", "del", "default").Run(); err != nil {
-		log.Fatal(err)
+		log.Infoln("ip route del default error!", err)
 	}
 
 	if err := exec.Command("ip", "netns", "exec", container,"ip",
 					"route", "add", "default", "via", ip).Run(); err != nil {
-		log.Fatal(err)
+		log.Infoln("ip route add default via ip error!", err)
 	}
 
 	if err := exec.Command("rm", dstFile).Run(); err != nil {
-		log.Fatal(err)
+		log.Infoln("rm link error!", err)
 	}
 
 	return string(gateway), nil
