@@ -9,6 +9,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"strings"
+	"os"
 )
 
 // Generate a mac addr
@@ -127,17 +128,21 @@ func updateDefaultGW4Container(container string, ip string) (string, error) {
 		return "", err
 	}
 
-	srcFile := "/host/proc/"+strings.TrimSuffix(strings.TrimPrefix(string(pid), "'"), "'")+"/ns/net"
+	srcFile := "/host/proc/"+strings.Split(string(pid), "'")[1]+"/ns/net"
 	dstFile := "/var/run/netns/"+container
-	if err := exec.Command("ln", "-s", srcFile, dstFile).Run(); err != nil {
+	log.Infoln("srcFile: ", srcFile)
+	log.Infoln("dstFile: ", dstFile)
+
+	if err := os.Symlink(srcFile, dstFile); err != nil {
 		log.Infoln("ln -s error!", err)
 	}
 
-	gateway, err := exec.Command("ip", "route", "|", "grep", "default", "|",
-		"cut", "-d", "' '", "-f", "3").Output()
+	gateway, err := exec.Command("ip", "netns", "exec", container,
+					"ip", "route", "|", "grep", "default", "|",
+					"cut", "-d", "' '", "-f", "3").Output()
 	if err != nil {
 		log.Infoln("ip route | grep default | cut -d ' ' -f 3 error!", err)
-		return "", err
+		//return "", err
 	}
 	log.Infof("=========gwteway:%s", string(gateway))
 
